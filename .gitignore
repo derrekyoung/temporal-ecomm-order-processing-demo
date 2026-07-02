@@ -1,0 +1,7 @@
+node_modules/
+lib/
+docs/
+.DS_Store
+
+# local dev-server persistence, if using --db-filename
+*.db
