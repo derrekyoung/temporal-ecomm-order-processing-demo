@@ -1,6 +1,5 @@
-// CLI entry point. Two modes, both thin wrappers around the Temporal client:
+// CLI entry point, a thin wrapper around the Temporal client:
 //   npm run order -- <scenario>            start an order workflow
-//   npm run signal -- <cancel|approve> <workflowId>   (added in a later phase)
 import { Client, Connection } from '@temporalio/client';
 import { orderWorkflow } from './workflows';
 import { TASK_QUEUE, type Order } from './shared';
@@ -8,7 +7,7 @@ import { TASK_QUEUE, type Order } from './shared';
 // Every scenario is a fixed order payload — failure injection rides along on
 // the `simulate` field, so demos are deterministic and repeatable.
 const SCENARIOS: Record<string, Order> = {
-  happy: {
+  'happy': {
     id: 'O-1001',
     items: [{ sku: 'SKU-001', quantity: 2 }],
     amount: 99.98,
