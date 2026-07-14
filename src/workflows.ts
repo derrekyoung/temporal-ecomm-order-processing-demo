@@ -7,7 +7,7 @@ import type * as activities from './activities';
 import type { Order, OrderStatus } from './shared';
 
 // Query: lets anyone (CLI, support tooling, a dashboard) ask a live or
-// completed order "where are you?" without touching the workflow's state.
+// completed order "where are you?" without mutating the workflow's state.
 export const getStatus = defineQuery<OrderStatus>('getStatus');
 
 const {

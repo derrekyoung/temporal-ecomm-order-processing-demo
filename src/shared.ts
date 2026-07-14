@@ -1,5 +1,4 @@
 // Shared types between the client, worker, and workflow code.
-// Kept dependency-free so the workflow bundle stays small and deterministic.
 
 // Failure injection is driven by order input, never randomness, so every
 // demo scenario is reproducible on the first try.
