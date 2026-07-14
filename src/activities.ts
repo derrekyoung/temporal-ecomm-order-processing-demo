@@ -24,6 +24,7 @@ const skus = (order: Order) =>
 export async function authorizePayment(order: Order, idempotencyKey: string): Promise<string> {
   await serviceLatency(350);
   const authId = `auth-${order.id}`;
+
   console.log(
     `[payment] authorized ${usd(order.amount)} for order ${order.id} ` +
     `(auth ${authId}, idempotency key ${idempotencyKey}) — funds held, not yet charged`,
@@ -39,7 +40,9 @@ export async function reserveInventory(order: Order): Promise<string> {
   // retryable by default — the workflow code never sees the first two
   // failures, the retry policy absorbs them.
   await serviceLatency(200);
+
   const { attempt } = Context.current().info;
+
   if (order.simulate === 'flaky-inventory' && attempt <= 2) {
     console.log(
       `[inventory] attempt ${attempt}: warehouse service timed out for order ${order.id} — ` +
@@ -50,6 +53,7 @@ export async function reserveInventory(order: Order): Promise<string> {
   }
 
   const reservationId = `resv-${order.id}`;
+
   console.log(
     `[inventory] reserved ${skus(order)} for order ${order.id} (reservation ${reservationId})`,
   );
@@ -69,6 +73,8 @@ export async function createShipment(order: Order): Promise<string> {
     console.log(
       `[shipping] carrier REJECTED order ${order.id}: destination address unserviceable — permanent, retrying will not help`,
     );
+
+    // Throw a non-retryable application failure to simulate a permanent failure
     throw ApplicationFailure.create({
       nonRetryable: true,
       type: 'ShipmentError',

@@ -5,11 +5,13 @@
 // demo scenario is reproducible on the first try.
 export type SimulateMode = 'none' | 'flaky-inventory' | 'shipment-failure';
 
+// Order item
 export interface OrderItem {
   sku: string;
   quantity: number;
 }
 
+// Order shape
 export interface Order {
   id: string;
   items: OrderItem[];
@@ -17,6 +19,7 @@ export interface Order {
   simulate: SimulateMode;
 }
 
+// Order status types
 export type OrderStatus =
   | 'RECEIVED'
   | 'PAYMENT_AUTHORIZED'
@@ -27,4 +30,5 @@ export type OrderStatus =
   | 'COMPENSATING'
   | 'FAILED_COMPENSATED';
 
+// Task queue name as a constant to be shared between client and worker
 export const TASK_QUEUE = 'orders';

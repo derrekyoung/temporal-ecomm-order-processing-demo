@@ -54,6 +54,8 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
   // If this pipeline changed in production (e.g. a fraud check inserted here),
   // we'd gate the new code with patched('fraud-check') so orders started
   // before the deploy still replay their old histories deterministically.
+  // Or we could use Workflow Versioning if the changes are substantial or we
+  // want a cleaner break between old and new code.
 
   try {
     const authId = await authorizePayment(order, idempotencyKey);
