@@ -58,22 +58,28 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
   // want a cleaner break between old and new code.
 
   try {
+    // 1) Authorize payment to make sure that this customer can fulfill the order.
     const authId = await authorizePayment(order, idempotencyKey);
     status = 'PAYMENT_AUTHORIZED';
     compensations.push(() => voidPaymentAuthorization(order, authId));
 
+    // 2) Reserve inventory for the order.
     const reservationId = await reserveInventory(order);
     status = 'INVENTORY_RESERVED';
     compensations.push(() => releaseInventory(order, reservationId));
 
+    // 3) Create a shipment for the order.
     await createShipment(order);
     status = 'SHIPPED';
 
+    // 4) Capture payment for the order and charge them.
     await capturePayment(order, authId, idempotencyKey);
     status = 'PAYMENT_CAPTURED';
 
+    // 5) Send a final confirmation to the customer.
     await sendConfirmation(order);
     status = 'COMPLETED';
+
     return status;
   } catch {
     // Only PERMANENT failures land here: transient errors are absorbed by the
