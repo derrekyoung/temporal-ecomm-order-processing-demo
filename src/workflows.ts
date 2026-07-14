@@ -19,19 +19,19 @@ const {
   releaseInventory,
   voidPaymentAuthorization,
 } = proxyActivities<typeof activities>({
-    startToCloseTimeout: '5 seconds',
-    // The retry policy is server-side config, not workflow code: transient
-    // failures (flaky-inventory) are absorbed here with ZERO lines of
-    // try/catch. 1s initial + 2x backoff makes each retry watchable live in
-    // worker logs and the Web UI; maximumAttempts caps the demo so a truly
-    // broken service fails the activity instead of retrying forever
-    // (production would typically retry longer, or indefinitely).
-    retry: {
-      initialInterval: '1 second',
-      backoffCoefficient: 2,
-      maximumAttempts: 5,
-    },
-  });
+  startToCloseTimeout: '5 seconds',
+  // The retry policy is server-side config, not workflow code: transient
+  // failures (flaky-inventory) are absorbed here with ZERO lines of
+  // try/catch. 1s initial + 2x backoff makes each retry watchable live in
+  // worker logs and the Web UI; maximumAttempts caps the demo so a truly
+  // broken service fails the activity instead of retrying forever
+  // (production would typically retry longer, or indefinitely).
+  retry: {
+    initialInterval: '1 second',
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
 
 export async function orderWorkflow(order: Order): Promise<OrderStatus> {
   let status: OrderStatus = 'RECEIVED';
@@ -50,6 +50,7 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
   // is what makes "retry aggressively" safe for money movement.
   const idempotencyKey = `pay-${workflowInfo().workflowId}`;
 
+  // TEMPORAL VERSIONING
   // If this pipeline changed in production (e.g. a fraud check inserted here),
   // we'd gate the new code with patched('fraud-check') so orders started
   // before the deploy still replay their old histories deterministically.
