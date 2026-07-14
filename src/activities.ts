@@ -45,7 +45,7 @@ export async function reserveInventory(order: Order): Promise<string> {
       `[inventory] attempt ${attempt}: warehouse service timed out for order ${order.id} — ` +
       `Temporal will retry automatically`,
     );
-    await serviceLatency(100);
+    await serviceLatency(500);
     throw new Error(`warehouse service timeout (attempt ${attempt})`);
   }
 
