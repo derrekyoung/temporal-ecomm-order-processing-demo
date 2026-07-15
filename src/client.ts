@@ -34,34 +34,29 @@ async function main() {
   const connection = await Connection.connect({ address: '127.0.0.1:7233' });
   const client = new Client({ connection });
 
-  if (mode === 'order') {
-    // Get the scenario from the arguments
-    const scenario = args[0];
+  // Get the scenario from the arguments
+  const scenario = args[0];
 
-    // Get the order from the scenario
-    const order = scenario ? SCENARIOS[scenario] : undefined;
-    if (!order) {
-      console.error(`Usage: npm run order -- <${Object.keys(SCENARIOS).join('|')}>`);
-      process.exit(1);
-    }
-
-    // Generate a unique workflow ID
-    const workflowId = `order-${scenario}-${Date.now()}`;
-
-    // Start the workflow
-    const handle = await client.workflow.start(orderWorkflow, {
-      taskQueue: TASK_QUEUE,
-      workflowId,
-      args: [order],
-    });
-    console.log(`Started ${workflowId} (watch it at http://localhost:8233)`);
-
-    const result = await handle.result();
-    console.log(`Workflow finished: ${result}`);
-  } else {
-    console.error('Usage: npm run order -- <scenario>');
+  // Get the order from the scenario
+  const order = scenario ? SCENARIOS[scenario] : undefined;
+  if (!order) {
+    console.error(`Usage: npm run order -- <${Object.keys(SCENARIOS).join('|')}>`);
     process.exit(1);
   }
+
+  // Generate a unique workflow ID
+  const workflowId = `order-${scenario}-${Date.now()}`;
+
+  // Start the workflow
+  const handle = await client.workflow.start(orderWorkflow, {
+    taskQueue: TASK_QUEUE,
+    workflowId,
+    args: [order],
+  });
+  console.log(`Started ${workflowId} (watch it at http://localhost:8233)`);
+
+  const result = await handle.result();
+  console.log(`Workflow finished: ${result}`);
 
   await connection.close();
 }
