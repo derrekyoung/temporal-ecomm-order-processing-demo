@@ -111,17 +111,17 @@ export async function sendConfirmation(order: Order): Promise<void> {
 // on stable ids (reservationId, authId), so running one twice is harmless.
 // ---------------------------------------------------------------------------
 
-export async function releaseInventory(order: Order, reservationId: string): Promise<void> {
-  await serviceLatency(200);
-  console.log(
-    `[inventory] released reservation ${reservationId} (${skus(order)}) — stock available for other orders again`,
-  );
-}
-
 export async function voidPaymentAuthorization(order: Order, authId: string): Promise<void> {
   await serviceLatency(300);
   console.log(
     `[payment] voided authorization ${authId} for ${usd(order.amount)} — customer was never charged`,
+  );
+}
+
+export async function releaseInventory(order: Order, reservationId: string): Promise<void> {
+  await serviceLatency(200);
+  console.log(
+    `[inventory] released reservation ${reservationId} (${skus(order)}) — stock available for other orders again`,
   );
 }
 
