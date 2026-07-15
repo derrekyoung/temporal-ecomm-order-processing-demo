@@ -124,3 +124,21 @@ export async function voidPaymentAuthorization(order: Order, authId: string): Pr
     `[payment] voided authorization ${authId} for ${usd(order.amount)} — customer was never charged`,
   );
 }
+
+export async function cancelShipment(order: Order, trackingId: string): Promise<void> {
+  await serviceLatency(250);
+  console.log(
+    `[shipping] cancelled shipment ${trackingId} for order ${order.id} — carrier will not dispatch, package recalled`,
+  );
+}
+
+export async function refundPayment(order: Order, authId: string, idempotencyKey: string): Promise<void> {
+  // A refund, not a void: the money already MOVED at capture, so we return it
+  // rather than release a hold. Keyed on its own idempotency key so a retried
+  // refund can never pay the customer back twice.
+  await serviceLatency(100);
+  console.log(
+    `[payment] refunded ${usd(order.amount)} on ${authId} for order ${order.id} ` +
+    `(idempotency key ${idempotencyKey}) — customer made whole after a captured charge`,
+  );
+}

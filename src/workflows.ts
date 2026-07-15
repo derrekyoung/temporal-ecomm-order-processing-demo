@@ -18,6 +18,8 @@ const {
   sendConfirmation,
   releaseInventory,
   voidPaymentAuthorization,
+  cancelShipment,
+  refundPayment,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: '5 seconds',
   // The retry policy is server-side config, not workflow code: transient
@@ -39,9 +41,12 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
 
   // Compensation stack: after each successful step, push its undo. If a later
   // step fails permanently, pop in REVERSE order — undo the most recent work
-  // first, like unwinding nested transactions (releasing inventory can matter
-  // to other orders immediately; voiding the auth is the final "no harm done").
-  // No Saga class, no framework — a plain array is the whole mechanism.
+  // first, like unwinding nested transactions (cancel the shipment, then refund
+  // or void the payment, then release inventory... each newest-first). Crucially
+  // the undo must MATCH what actually happened: an authorized-but-not-captured
+  // payment is voided, a captured one is refunded — different operations, so
+  // each forward step registers its own correct reversal. No Saga class, no
+  // framework — a plain array is the whole mechanism.
   const compensations: Array<() => Promise<unknown>> = [];
 
   // The idempotency key is derived from the workflow id INSIDE the workflow:
@@ -69,15 +74,35 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
     compensations.push(() => releaseInventory(order, reservationId));
 
     // 3) Create a shipment for the order.
-    await createShipment(order);
+    const trackingId = await createShipment(order);
     status = 'SHIPPED';
+    compensations.push(() => cancelShipment(order, trackingId));
 
-    // 4) Capture payment for the order and charge them.
+    // 4) Capture payment for the order and charge them. Once money has MOVED,
+    // the undo is a refund, not a void.
     await capturePayment(order, authId, idempotencyKey);
     status = 'PAYMENT_CAPTURED';
 
-    // 5) Send a final confirmation to the customer.
-    await sendConfirmation(order);
+    // A refund is a SEPARATE money movement from the capture, so it gets its
+    // own idempotency key — reusing the `pay-` key would let the gateway dedupe
+    // the refund against the original charge and silently drop it. Still derived
+    // from the workflow id, so it's deterministic and stable across retries and
+    // replay: the refund can be retried aggressively without ever paying out twice.
+    const refundKey = `refund-${workflowInfo().workflowId}`;
+    compensations.push(() => refundPayment(order, authId, refundKey));
+
+    // 5) Send a final confirmation to the customer. This is the one step that
+    // must NOT trigger the saga: the order is already paid and shipped, and a
+    // failed notification is no reason to refund and cancel a good order. We
+    // absorb a permanent failure here (log and move on) so the customer keeps
+    // their shipment. Worst case they don't get an email, which support can
+    // resend out of band. Everything before this point is transactional; this
+    // is best-effort.
+    try {
+      await sendConfirmation(order);
+    } catch {
+      console.log(`[notification] confirmation failed for order ${order.id} — order still COMPLETED, notify out of band`);
+    }
     status = 'COMPLETED';
 
     return status;
@@ -85,7 +110,7 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
     // Only PERMANENT failures land here: transient errors are absorbed by the
     // retry policy above and non-retryable ApplicationFailures skip it.
     // Production notes: compensations are activities, so each undo below gets
-    // the same retry policy as forward steps, and each is idempotent — the two
+    // the same retry policy as forward steps, and each is idempotent: the two
     // requirements for a safe saga. (Production would also inspect the error
     // type before deciding to compensate vs. fail loudly.)
     status = 'COMPENSATING';

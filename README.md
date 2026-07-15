@@ -54,17 +54,24 @@ flowchart LR
     C --> D["4 · capture<br/>payment"]
     D --> E["5 · send<br/>confirmation"]
 
-    C -. "permanent failure ①<br/>release inventory" .-> B
-    C -. "② void authorization<br/>(customer never charged)" .-> A
+    D -. "permanent failure ①<br/>cancel shipment" .-> C
+    C -. "② release inventory" .-> B
+    B -. "③ void authorization<br/>(auth never captured)" .-> A
 ```
 
 
 
 After each successful step the workflow pushes an undo function onto a plain
-array — the compensation stack. If a later step fails permanently (the dashed
-path above), the stack unwinds in reverse: most recent work is undone first.
-The order ends `FAILED_COMPENSATED` — a completed workflow with a clean
-business outcome: no duplicate charge, no stranded reservation.
+array — the compensation stack — and each undo matches what that step actually
+did: a shipment gets cancelled, an authorized-but-uncaptured payment gets
+voided, a captured one gets refunded. If a later step fails permanently (the
+dashed path above illustrates a capture failure), the stack unwinds in reverse:
+most recent work is undone first. The order ends `FAILED_COMPENSATED` — a
+completed workflow with a clean business outcome: no duplicate charge, no
+stranded reservation, no live shipment for an order that won't be paid. The lone
+exception is the final confirmation (step 5): a failed notification is
+best-effort — it's logged and skipped, never a reason to refund and cancel a
+paid, shipped order, so that order still ends `COMPLETED`.
 
 ## Scenarios
 
