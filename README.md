@@ -13,8 +13,6 @@ retryable, and queryable at every step.
 - Node.js 20+ and npm
 - [Temporal CLI](https://docs.temporal.io/cli) (`brew install temporal`)
 
-
-
 ## Quick start
 
 Three terminals:
@@ -39,8 +37,6 @@ history — at [http://localhost:8233](http://localhost:8233).
 > `temporal server start-dev --db-filename temporal.db` if you want runs to
 > survive restarts.
 
-
-
 ## The workflow
 
 One workflow, `orderWorkflow`, drives every order through five steps. Payment
@@ -59,8 +55,6 @@ flowchart LR
     B -. "③ void authorization<br/>(auth never captured)" .-> A
 ```
 
-
-
 After each successful step the workflow pushes an undo function onto a plain
 array — the compensation stack — and each undo matches what that step actually
 did: a shipment gets cancelled, an authorized-but-uncaptured payment gets
@@ -78,13 +72,11 @@ paid, shipped order, so that order still ends `COMPLETED`.
 Failure injection is driven by the order's `simulate` field — never by
 randomness — so every scenario is deterministic and repeatable.
 
-
 | Command                             | What happens                                                                                                                                                                                                                                     | What to watch at localhost:8233                                                                                                                                                                  |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `npm run order -- happy`            | All five steps succeed; order ends `COMPLETED`.                                                                                                                                                                                                  | Five activities, each with realistic service latency, completing in sequence.                                                                                                                    |
 | `npm run order -- flaky-inventory`  | Inventory service fails twice; Temporal retries automatically (1s, then 2s backoff) and succeeds on attempt 3. Order ends `COMPLETED` — with zero retry code in the workflow.                                                                    | The `reserveInventory` activity shows `attempt: 3` and the last failure message (`warehouse service timeout`).                                                                                   |
 | `npm run order -- shipment-failure` | The carrier permanently rejects the shipment (non-retryable — retrying can't fix a bad address). The workflow compensates in reverse: releases the inventory reservation, then voids the payment authorization. Order ends `FAILED_COMPENSATED`. | `createShipment` fails once with `RETRY_STATE_NON_RETRYABLE_FAILURE` (no retries), then `releaseInventory` and `voidPaymentAuthorization` run — and the workflow **completes**, it doesn't fail. |
-
 
 More scenarios (cancellation, human-in-the-loop approval) arrive in later
 phases.
@@ -181,14 +173,14 @@ Returns the live business status (`PAYMENT_AUTHORIZED`, `INVENTORY_RESERVED`,
 The most compelling live moment, and it requires zero extra code.
 
 1. Start the retry scenario — its retry backoff makes the run last ~5 seconds,
-  a comfortable window: `npm run order -- flaky-inventory`
+   a comfortable window: `npm run order -- flaky-inventory`
 2. As soon as the worker logs the first `warehouse service timed out` line,
-  hit `Ctrl-C` on the worker (Terminal 2). The client keeps waiting; the Web
+   hit `Ctrl-C` on the worker (Terminal 2). The client keeps waiting; the Web
    UI shows the workflow still running — completed steps (payment
    authorization) are safe in history on the server.
 3. Restart the worker: `npm run worker`
 4. The order resumes exactly where it left off and finishes `COMPLETED`. Steps
-  that already ran are **not** re-executed — the customer was authorized once
+   that already ran are **not** re-executed — the customer was authorized once
    and will be charged once.
 
 The workflow survives because all state lives in the Temporal server's event
@@ -203,7 +195,7 @@ flowchart LR
     end
 
     subgraph serverBox["Temporal server (start-dev)"]
-        SERVER["task queue "orders"<br/>+ event history (source of truth)"]
+        SERVER["task queue &quot;orders&quot;<br/>+ event history (source of truth)"]
         WEBUI["Web UI · localhost:8233"]
         SERVER -.-> WEBUI
     end
@@ -221,32 +213,30 @@ flowchart LR
     SERVER -->|"6 · workflow result / getStatus"| CLIENT
 ```
 
-
-
 The pieces, in the order they touch an order:
 
 1. **[src/client.ts](src/client.ts)** maps the scenario name (`happy`) to a fixed
-  `Order` payload — including the `simulate` field that drives failure
+   `Order` payload — including the `simulate` field that drives failure
    injection — and asks the Temporal server to start `orderWorkflow` with a
    unique workflow id. It then blocks on the result. The client never talks to
    the worker; **everything flows through the server**.
 2. **The Temporal server** persists the request as event history and puts a
-  workflow task on the `orders` task queue. History is the source of truth:
+   workflow task on the `orders` task queue. History is the source of truth:
    every step below is recorded there, which is what makes workflows resumable
    after a crash.
 3. **[src/worker.ts](src/worker.ts)** is a stateless host that long-polls that
-  task queue. It runs workflow code in a deterministic sandbox (bundled from
+   task queue. It runs workflow code in a deterministic sandbox (bundled from
    `workflowsPath`) and activities as plain functions.
 4. **[src/workflows.ts](src/workflows.ts)** (`orderWorkflow`) is pure
-  orchestration: authorize → reserve → ship → capture → confirm. It performs
+   orchestration: authorize → reserve → ship → capture → confirm. It performs
    no I/O itself — each step is an activity invocation scheduled through the
    server, and each between-step decision (status updates, retry policy,
    failure handling) is workflow logic. It also answers the `getStatus` query.
 5. **[src/activities.ts](src/activities.ts)** is where side effects live: the
-  five mocked services (with realistic latency), each logging a business
-   narrative line like `[payment] authorized $99.98 … funds held, not yet  charged`. Completed activity results are recorded in history and are never
+   five mocked services (with realistic latency), each logging a business
+   narrative line like `[payment] authorized $99.98 … funds held, not yet charged`. Completed activity results are recorded in history and are never
    re-executed on replay — only unfinished work retries.
 6. **[src/shared.ts](src/shared.ts)** is the contract everyone imports: the
-  `Order`/`OrderStatus` types, the `simulate` failure modes, and the task
+   `Order`/`OrderStatus` types, the `simulate` failure modes, and the task
    queue name.
 

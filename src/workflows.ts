@@ -75,7 +75,7 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
 
     // 3) Create a shipment for the order.
     const trackingId = await createShipment(order);
-    status = 'SHIPPED';
+    status = 'SHIPMENT_CREATED';
     compensations.push(() => cancelShipment(order, trackingId));
 
     // 4) Capture payment for the order and charge them. Once money has MOVED,
@@ -107,16 +107,20 @@ export async function orderWorkflow(order: Order): Promise<OrderStatus> {
 
     return status;
   } catch {
-    // Only PERMANENT failures land here: transient errors are absorbed by the
-    // retry policy above and non-retryable ApplicationFailures skip it.
-    // Production notes: compensations are activities, so each undo below gets
-    // the same retry policy as forward steps, and each is idempotent: the two
-    // requirements for a safe saga. (Production would also inspect the error
-    // type before deciding to compensate vs. fail loudly.)
+    // What actually reaches this catch: a non-retryable ApplicationFailure
+    // (fails on attempt 1, like the shipment rejection), OR a transient error
+    // that exhausted maximumAttempts — the retry policy absorbs transient
+    // failures only up to the cap, not forever. (Cancellation would land here
+    // too, but this bare catch can't compensate a cancelled workflow: scheduling
+    // an activity from a cancelled scope throws immediately, so the unwind would
+    // die on its first undo. Production wraps it in CancellationScope.nonCancellable
+    // — deliberately out of scope for this demo.)
     status = 'COMPENSATING';
+
     for (const undo of compensations.reverse()) {
       await undo();
     }
+
     // The workflow COMPLETES (with a business status), it doesn't fail: the
     // saga did its job — no duplicate charge, no stranded reservation.
     status = 'FAILED_COMPENSATED';
