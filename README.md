@@ -40,8 +40,11 @@ history — at [http://localhost:8233](http://localhost:8233).
 ## The workflow
 
 One workflow, `orderWorkflow`, drives every order through five steps. Payment
-is deliberately split into authorize (hold funds) and capture (charge) — the
-saga pattern hinges on being able to void an authorization before capture.
+is deliberately split into authorize (hold funds) and capture (charge): that
+split is what gives the saga two distinct, *correct* undos — a payment we
+authorized but never captured is **voided**, while one we already captured is
+**refunded**. Same money, different reversal, and the workflow always knows
+which one applies.
 
 ```mermaid
 flowchart LR
