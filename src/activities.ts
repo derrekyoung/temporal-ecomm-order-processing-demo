@@ -39,7 +39,7 @@ export async function reserveInventory(order: Order): Promise<string> {
   // if the worker is killed and restarted mid-retry. A thrown Error is
   // retryable by default — the workflow code never sees the first two
   // failures, the retry policy absorbs them.
-  await serviceLatency(200);
+  await serviceLatency(500);
 
   const { attempt } = Context.current().info;
 
@@ -48,7 +48,7 @@ export async function reserveInventory(order: Order): Promise<string> {
       `[inventory] attempt ${attempt}: warehouse service timed out for order ${order.id} — ` +
       `Temporal will retry automatically`,
     );
-    await serviceLatency(500);
+    await serviceLatency(800);
     throw new Error(`warehouse service timeout (attempt ${attempt})`);
   }
 
@@ -90,7 +90,7 @@ export async function createShipment(order: Order): Promise<string> {
 }
 
 export async function capturePayment(order: Order, authId: string, idempotencyKey: string): Promise<void> {
-  await serviceLatency(300);
+  await serviceLatency(500);
   console.log(
     `[payment] captured ${usd(order.amount)} on ${authId} for order ${order.id} ` +
     `(idempotency key ${idempotencyKey}) — customer charged exactly once`,
@@ -112,7 +112,7 @@ export async function sendConfirmation(order: Order): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function voidPaymentAuthorization(order: Order, authId: string): Promise<void> {
-  await serviceLatency(300);
+  await serviceLatency(200);
   console.log(
     `[payment] voided authorization ${authId} for ${usd(order.amount)} — customer was never charged`,
   );
@@ -126,7 +126,7 @@ export async function releaseInventory(order: Order, reservationId: string): Pro
 }
 
 export async function cancelShipment(order: Order, trackingId: string): Promise<void> {
-  await serviceLatency(250);
+  await serviceLatency(150);
   console.log(
     `[shipping] cancelled shipment ${trackingId} for order ${order.id} — carrier will not dispatch, package recalled`,
   );
