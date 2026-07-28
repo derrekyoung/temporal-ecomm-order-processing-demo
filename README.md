@@ -43,8 +43,8 @@ One workflow, `orderWorkflow`, drives every order through five steps. Payment
 is deliberately split into authorize (hold funds) and capture (charge): that
 split is what gives the saga two distinct, *correct* undos — a payment we
 authorized but never captured is **voided**, while one we already captured is
-**refunded**. Same money, different reversal, and the workflow always knows
-which one applies.
+**refunded**. Same money, different reversal, and each step registers the
+reversal that matches the work it just did.
 
 ```mermaid
 flowchart LR
@@ -69,6 +69,58 @@ stranded reservation, no live shipment for an order that won't be paid. The lone
 exception is the final confirmation (step 5): a failed notification is
 best-effort — it's logged and skipped, never a reason to refund and cancel a
 paid, shipped order, so that order still ends `COMPLETED`.
+
+> **One honest caveat about the payment undos.** The void is pushed at step 1
+> and the refund at step 4, so once capture succeeds *both* sit on the stack.
+> That never causes a double reversal here only because nothing after capture
+> can trigger the saga — step 5 catches its own failure. Add a sixth step that
+> can fail and the unwind would refund *and* then void the same authorization.
+> The structurally correct fix is for capture to **replace** its authorization's
+> undo rather than stack a second one; this demo keeps the plain push-only array
+> because that's the version worth reading. Worth knowing before someone asks.
+
+## Retry and timeout configuration
+
+Every activity — forward step *and* compensation — is proxied through one
+policy declared in [src/workflows.ts](src/workflows.ts). This is the whole of
+the retry story; there is no try/catch, no backoff loop, no dead letter queue
+anywhere in the workflow:
+
+```ts
+proxyActivities<typeof activities>({
+  startToCloseTimeout: '5 seconds',
+  retry: {
+    initialInterval: '1 second',
+    backoffCoefficient: 2,
+    maximumAttempts: 5,
+  },
+});
+```
+
+| Setting               | Value       | What it does                                                                                                                                            |
+| --------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startToCloseTimeout` | `5 seconds` | How long a single attempt may run before Temporal kills it and counts it as a failed attempt. The slowest mocked call here is 1.3s, so it never trips.  |
+| `initialInterval`     | `1 second`  | Wait before the second attempt.                                                                                                                         |
+| `backoffCoefficient`  | `2`         | Each subsequent wait doubles: 1s, 2s, 4s, 8s.                                                                                                           |
+| `maximumAttempts`     | `5`         | Hard cap. On the 5th failure the activity fails for real and the error reaches the workflow's catch block — which is what runs the saga.                |
+
+Three things follow from this that are worth saying out loud in a demo:
+
+- **The policy is server-side state, not worker state.** Attempt counts live in
+  event history, so killing the worker mid-retry doesn't reset the count — which
+  is exactly why the durability demo below works.
+- **It covers compensations for free.** The undo activities are proxied through
+  the same object, so a flaky refund service gets the same five attempts as a
+  flaky capture. Durable forward path, durable unwind.
+- **Non-retryable failures skip it entirely.** An `ApplicationFailure` created
+  with `nonRetryable: true` (the shipment rejection) fails on attempt 1 and goes
+  straight to compensation, instead of burning ~15s of pointless backoff on a
+  bad address.
+
+The values are tuned for a live demo — 1s and 2s waits are long enough to watch
+in the Web UI and short enough to hold an audience. Production would typically
+back off much further and retry for far longer, often indefinitely, with the
+cap replaced by an alert.
 
 ## Scenarios
 
@@ -100,8 +152,9 @@ choreography — yet every step lands in server-side event history as it
 completes. That history is what the other scenarios lean on.
 
 **How it works:** the order carries `simulate: 'none'`, so no failure is
-injected. Each mocked service takes 150–450ms (simulated latency), so the
-activities have visible width on the Web UI timeline. The terminal narrates
+injected. Each mocked service takes 150–500ms (simulated latency), so the
+activities have visible width on the Web UI timeline. End to end the run takes
+roughly 2 seconds. The terminal narrates
 each step in business terms: funds held, stock reserved, shipment created,
 charged exactly once, customer notified.
 
@@ -168,15 +221,35 @@ Ask any order — running or finished — where it is:
 temporal workflow query --workflow-id <workflowId> --type getStatus
 ```
 
-Returns the live business status (`PAYMENT_AUTHORIZED`, `INVENTORY_RESERVED`,
-…, `COMPLETED`), the answer to the support team's "where is my order?".
+Returns the live business status — the answer to the support team's "where is
+my order?". The full set lives in [src/shared.ts](src/shared.ts):
+
+| Status               | Meaning                                              | Terminal?                    |
+| -------------------- | ---------------------------------------------------- | ---------------------------- |
+| `RECEIVED`           | Workflow started, no step has completed yet.          |                              |
+| `PAYMENT_AUTHORIZED` | Funds held on the customer's card, not yet charged.   |                              |
+| `INVENTORY_RESERVED` | Stock allocated to this order.                        |                              |
+| `SHIPMENT_CREATED`   | Carrier has a tracking number.                        |                              |
+| `PAYMENT_CAPTURED`   | Money has actually moved — undo is now a refund.      |                              |
+| `COMPLETED`          | All five steps done (confirmation is best-effort).    | ✅ success                   |
+| `COMPENSATING`       | A step failed permanently; the unwind is in progress. |                              |
+| `FAILED_COMPENSATED` | Unwind finished cleanly — nothing left stranded.      | ✅ clean business failure    |
+
+Both terminal states are *completed* workflows as far as Temporal is concerned.
+`FAILED_COMPENSATED` is a business outcome, not a crash — see the saga scenario
+above for why that distinction matters.
+
+`COMPENSATING` is the one status you can only catch live, by querying while the
+unwind is running. It's the most convincing status in the set precisely because
+it proves the query reads real in-flight workflow state rather than a database
+row somebody remembered to update.
 
 ## Durability demo: kill the worker mid-order
 
 The most compelling live moment, and it requires zero extra code.
 
-1. Start the retry scenario — its retry backoff makes the run last ~5 seconds,
-   a comfortable window: `npm run order -- flaky-inventory`
+1. Start the retry scenario — its retry backoff makes the run last ~7–8
+   seconds, a comfortable window: `npm run order -- flaky-inventory`
 2. As soon as the worker logs the first `warehouse service timed out` line,
    hit `Ctrl-C` on the worker (Terminal 2). The client keeps waiting; the Web
    UI shows the workflow still running — completed steps (payment
@@ -235,11 +308,77 @@ The pieces, in the order they touch an order:
    no I/O itself — each step is an activity invocation scheduled through the
    server, and each between-step decision (status updates, retry policy,
    failure handling) is workflow logic. It also answers the `getStatus` query.
-5. **[src/activities.ts](src/activities.ts)** is where side effects live: the
-   five mocked services (with realistic latency), each logging a business
-   narrative line like `[payment] authorized $99.98 … funds held, not yet charged`. Completed activity results are recorded in history and are never
-   re-executed on replay — only unfinished work retries.
+5. **[src/activities.ts](src/activities.ts)** is where side effects live — see
+   [the mocked services](#the-mocked-services) below. Completed activity results
+   are recorded in history and are never re-executed on replay; only unfinished
+   work retries.
 6. **[src/shared.ts](src/shared.ts)** is the contract everyone imports: the
    `Order`/`OrderStatus` types, the `simulate` failure modes, and the task
    queue name.
+
+### The mocked services
+
+There is no real payment gateway, warehouse, or carrier here. Every external
+system is a plain async function that sleeps for a while and logs a line — in
+production each would be an API client, and *nothing else about the demo would
+change*. That's the point worth making: the workflow, the retry policy, the
+saga, and the durability guarantees are all indifferent to what's behind the
+activity boundary.
+
+Nine activities, in two groups. The five forward steps:
+
+| Activity             | Simulated latency | Returns / does                              | Logged as                                                    |
+| -------------------- | ----------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| `authorizePayment`   | 350ms             | `auth-<orderId>` — holds funds, no charge   | `[payment] authorized $99.98 … funds held, not yet charged`  |
+| `reserveInventory`   | 500ms             | `resv-<orderId>` — allocates stock          | `[inventory] reserved 2x SKU-001 …`                          |
+| `createShipment`     | 450ms             | `track-<orderId>` — books the carrier       | `[shipping] shipment created …, tracking track-O-1001`       |
+| `capturePayment`     | 500ms             | charges the held authorization              | `[payment] captured $99.98 … charged exactly once`           |
+| `sendConfirmation`   | 150ms             | notifies the customer (best-effort)         | `[notification] confirmation sent …`                         |
+
+And the four compensations, each the undo of exactly one forward step:
+
+| Compensation               | Undoes             | Latency | Logged as                                                       |
+| -------------------------- | ------------------ | ------- | --------------------------------------------------------------- |
+| `voidPaymentAuthorization` | `authorizePayment` | 200ms   | `[payment] voided authorization … customer was never charged`   |
+| `releaseInventory`         | `reserveInventory` | 200ms   | `[inventory] released reservation … stock available again`      |
+| `cancelShipment`           | `createShipment`   | 150ms   | `[shipping] cancelled shipment … carrier will not dispatch`     |
+| `refundPayment`            | `capturePayment`   | 100ms   | `[payment] refunded $99.98 … customer made whole`               |
+
+Three details in there are load-bearing rather than cosmetic:
+
+- **The latency is deliberate, not decoration.** Instant activities collapse to
+  slivers on the Web UI timeline and there's nothing to point at. These values
+  give each step visible width. `reserveInventory` sleeps a further 800ms before
+  throwing in the `flaky-inventory` scenario, so a failing attempt is wider than
+  a succeeding one and the retries are easy to narrate live.
+- **`setTimeout` is legal here and illegal one file over.** Activities are
+  allowed to be slow, non-deterministic, and side-effectful — that is the entire
+  reason the boundary exists. The same call inside [workflows.ts](src/workflows.ts)
+  would break replay.
+- **The compensations are idempotent by construction.** Each is keyed on a
+  stable id (`authId`, `reservationId`, `trackingId`) that the forward step
+  returned and history preserved, so running one twice is harmless — which is
+  what makes it safe to hand them the same aggressive retry policy as the
+  forward path. `refundPayment` additionally carries its own `refund-` key,
+  separate from the `pay-` key used for authorize and capture: a refund is a
+  distinct money movement, and reusing the charge's key would invite a real
+  gateway to dedupe the refund against the original charge and silently drop it.
+
+Logs read as a business event stream (`[payment]`, `[inventory]`, `[shipping]`,
+`[notification]`) rather than a stack trace, so the worker terminal can be
+projected next to the Web UI and both tell the same story.
+
+## Scripts
+
+| Command                    | What it does                                                     |
+| -------------------------- | ---------------------------------------------------------------- |
+| `npm run worker`           | Starts the worker (hosts workflow + activity code). Long-running. |
+| `npm run order -- <name>`  | Starts one order workflow and blocks until it finishes.           |
+| `npm run build`            | Type-checks the whole project with `tsc --noEmit`. Emits nothing. |
+
+`npm run build` is the fast way to confirm the project is sound without standing
+up a server — worth running after any change to [shared.ts](src/shared.ts),
+since the `Order` and `OrderStatus` types are the contract binding the client,
+workflow, and activities together and a mismatch there shows up as a type error
+rather than a runtime surprise.
 
